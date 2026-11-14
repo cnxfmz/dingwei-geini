@@ -277,4 +277,10 @@ function buildMessage(hasHead, changed, stat, nameStatus) {
   };
 }
 
-main();
+try {
+  main();
+} catch (e) {
+  const detail = (e.stderr ? String(e.stderr) : '').trim();
+  console.error(`[sync] 失败：${e.message}${detail ? `\n${detail.split('\n').slice(-6).join('\n')}` : ''}`);
+  process.exit(1);
+}
