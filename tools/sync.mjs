@@ -240,8 +240,9 @@ function buildMessage(hasHead, changed, stat, nameStatus) {
     const h = fresh[0];
     const block = cur.split(/^###\s+/m).find((b) => b.startsWith(`${h.ver} `)) || '';
     const bullets = block.split('\n').filter((l) => /^\s*-\s+/.test(l)).map((l) => l.trim()).slice(0, 12);
+    const kind = /修正|修复|fix|bug/i.test(h.title) ? 'fix' : /文档|说明|排版/i.test(h.title) ? 'docs' : 'feat';
     return {
-      subject: `feat(dingwei-geini): ${h.ver} ${h.title}`,
+      subject: `${kind}(dingwei-geini): ${h.ver} ${h.title}`,
       body: [
         ...(bullets.length ? bullets : [`CHANGELOG 新增 ${h.ver} 条目`]),
         ...(fresh.length > 1 ? [`本次一并合入：${fresh.slice(1).map((x) => x.ver).join('、')}`] : []),
@@ -261,9 +262,9 @@ function buildMessage(hasHead, changed, stat, nameStatus) {
   } else if (/(^|\s)(SKILL|README|CHANGELOG|docs\/)/.test(joined)) {
     type = 'docs';
     what = '更新说明文档';
-  } else if (/(^|\s)scripts\//.test(joined)) {
+  } else if (/(^|\s)(scripts|tools)\//.test(joined)) {
     type = 'refactor';
-    what = '调整脚本';
+    what = '调整同步/构建脚本';
   }
   return {
     subject: `${type}(dingwei-geini): ${what}（未写变更日志）`,
