@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0b2029"/>
+      <stop offset="0.55" stop-color="#060f16"/>
+      <stop offset="1" stop-color="#03060a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.52">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.34"/>
+      <stop offset="0.55" stop-color="#22d3ee" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pin" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#7ff0ff"/>
+      <stop offset="0.45" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#0e8fb0"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底板 -->
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="url(#glow)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="114.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+
+  <!-- 网格（地图感，压到很淡） -->
+  <g stroke="#22d3ee" stroke-opacity="0.09" stroke-width="2">
+    <path d="M0 168 H512 M0 256 H512 M0 344 H512"/>
+    <path d="M168 0 V512 M256 0 V512 M344 0 V512"/>
+  </g>
+
+  <!-- 定位针（水滴 + 光环 + 针尖落点） -->
+  <g>
+    <path d="M256 92
+             C 322 92, 372 142, 372 206
+             C 372 268, 316 314, 268 372
+             C 263 378, 258 384, 256 392
+             C 254 384, 249 378, 244 372
+             C 196 314, 140 268, 140 206
+             C 140 142, 190 92, 256 92 Z"
+          fill="url(#pin)"/>
+    <path d="M256 92
+             C 322 92, 372 142, 372 206
+             C 372 268, 316 314, 268 372
+             C 263 378, 258 384, 256 392
+             C 254 384, 249 378, 244 372
+             C 196 314, 140 268, 140 206
+             C 140 142, 190 92, 256 92 Z"
+          fill="none" stroke="#bff6ff" stroke-opacity="0.55" stroke-width="3"/>
+    <!-- 内环 -->
+    <circle cx="256" cy="204" r="52" fill="#04121a"/>
+    <circle cx="256" cy="204" r="52" fill="none" stroke="#bff6ff" stroke-opacity="0.35" stroke-width="3"/>
+    <circle cx="256" cy="204" r="20" fill="#7ff0ff"/>
+    <!-- 落点阴影 -->
+    <ellipse cx="256" cy="414" rx="54" ry="13" fill="#22d3ee" fill-opacity="0.22"/>
+    <ellipse cx="256" cy="414" rx="26" ry="7" fill="#7ff0ff" fill-opacity="0.35"/>
+  </g>
+</svg>
