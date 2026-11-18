@@ -274,6 +274,15 @@
   .mfoot .primary{background:linear-gradient(180deg,var(--acc),var(--acc));border-color:var(--acc);color:var(--sA);font-weight:600;box-shadow:0 2px 10px rgba(var(--acc-rgb),.22)}
   .mfoot .primary:hover{filter:brightness(1.07);color:var(--sA)}
 
+  /* 剪贴板识别确认：候选坐标 */
+  .pmdesc{font-size:12px;color:var(--sub);margin:0 0 9px;line-height:1.6}
+  .pcd{display:block;width:100%;text-align:left;margin:6px 0;padding:8px 10px;background:rgba(var(--hl-rgb),.04);
+    border:1px solid rgba(var(--ln-rgb),.42);border-radius:7px;color:var(--txt);font-size:12px;cursor:pointer;font-family:var(--mono)}
+  .pcd:hover{border-color:rgba(var(--acc-rgb),.5)}
+  .pcd.on{border-color:rgba(var(--acc-rgb),.75);background:rgba(var(--acc-rgb),.09);color:var(--acc)}
+  .pcd span{display:block;color:var(--dim);font-size:10px;margin-top:3px}
+  .pcd.on span{color:var(--sub)}
+
   /* ---------- 设置：标记样式 ---------- */
   #setModal .mbox{width:min(468px,94vw)}
   .set-hd{display:flex;align-items:baseline;gap:8px;margin:1px 0 10px}
@@ -1806,17 +1815,29 @@
     </div>
 
     <div class="block opt">
-      <div class="fline"><label for="addLat">经纬度</label><span class="tag opt">选填</span>
-        <span class="fnote">顺序写反也认，解析成功自动填</span></div>
+      <div class="fline"><label for="addLng">经纬度</label><span class="tag opt">选填</span>
+        <span class="fnote">经度在前，写反也认，解析成功自动填</span></div>
       <div class="m2">
-        <input id="addLat" type="text" placeholder="纬度 自动" inputmode="decimal">
         <input id="addLng" type="text" placeholder="经度 自动" inputmode="decimal">
+        <input id="addLat" type="text" placeholder="纬度 自动" inputmode="decimal">
       </div>
     </div>
 
     <div class="mfoot">
       <button class="mini" id="addCancel" type="button">取消</button>
       <button class="mini primary" id="addSave" type="button">添加到清单</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="pasteModal" role="dialog" aria-modal="true" aria-labelledby="pasteTitle">
+  <div class="mbox">
+    <div class="mhd"><b id="pasteTitle">从剪贴板识别到坐标</b><button class="x" id="pasteClose" type="button" aria-label="关闭">×</button></div>
+    <div class="pmdesc" id="pasteInfo"></div>
+    <div id="pasteCands"></div>
+    <div class="mfoot">
+      <button class="mini" id="pasteCancel" type="button">取消</button>
+      <button class="mini primary" id="pasteGo" type="button">跳转到此坐标</button>
     </div>
   </div>
 </div>
@@ -8038,6 +8059,110 @@ function delPoint(id){
   if(typeof FB!=='undefined'&&FB.on)renderFbMarkers();else rebuildMarkerLayer();
   setStatus('已删除第 '+p.no+' 点「'+p.short+'」· 删除后不可恢复','ok');
 }
+/* ---------- 剪贴板坐标识别：文本走正则（离线可用），截图走按需 OCR（必须联网） ---------- */
+const PST={list:[],pick:0,ocr:null};
+function pasteCoordExtract(s){
+  if(!s)return [];
+  /* 换行换成阻断符，避免相邻两行的坐标被跨行错配成一组 */
+  const T=String(s).replace(/[，；]/g,',').replace(/[ \t]+/g,' ').replace(/[\r\n]+/g,'#');
+  const out=[],seen={};
+  const push=(a,b,raw)=>{
+    const cp=coordPair(String(a),String(b));
+    if(!cp)return;
+    const k=cp.lat.toFixed(5)+','+cp.lng.toFixed(5);
+    if(seen[k])return;seen[k]=1;
+    out.push({lat:cp.lat,lng:cp.lng,raw:String(raw||k).slice(0,52)});
+  };
+  /* ① 带标签：纬度/lat 与 经度/lng 各自收集后按出现顺序配对，不受先后顺序影响 */
+  const L=[...T.matchAll(/["']?(?:lat(?:itude)?|纬度)["']?\s*[:：=]?\s*(-?\d+(?:\.\d+)?)/gi)].map(m=>m[1]);
+  const N=[...T.matchAll(/["']?(?:lng|lon(?:gitude)?|经度)["']?\s*[:：=]?\s*(-?\d+(?:\.\d+)?)/gi)].map(m=>m[1]);
+  for(let i=0;i<Math.min(L.length,N.length);i++)push(L[i],N[i],L[i]+' / '+N[i]);
+  /* ② 裸数字对：逐个 token 相邻配对。配对失败不消耗数字，避免「18 32.039,112.157」里的日期
+     把真坐标吞掉；'#' 是换行阻断符，中文/字母做间隔时也不会硬凑成一对 */
+  const TOK=[...T.matchAll(/-?\d+(?:\.\d+)?/g)].map(m=>({v:m[0],at:m.index,end:m.index+m[0].length}));
+  for(let i=0;i+1<TOK.length;i++){
+    const gap=T.slice(TOK[i].end,TOK[i+1].at);
+    if(!/^[ ,/]{1,3}$/.test(gap))continue;
+    push(TOK[i].v,TOK[i+1].v,TOK[i].v+gap+TOK[i+1].v);
+  }
+  /* ③ 方位写法：N32.03 E112.15 */
+  const dir=T.match(/[NnSs]\s*(\d+(?:\.\d+)?)\D{1,4}[EeWw]\s*(\d+(?:\.\d+)?)/);
+  if(dir)push(dir[1],dir[2],dir[0]);
+  return out.slice(0,8);
+}
+function loadOcr(){
+  if(window.Tesseract)return Promise.resolve(window.Tesseract);
+  if(PST.ocr)return PST.ocr;
+  PST.ocr=new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload=()=>window.Tesseract?resolve(window.Tesseract):(PST.ocr=null,reject(new Error('识别引擎没加载好')));
+    s.onerror=()=>{PST.ocr=null;reject(new Error('联网失败，截图识别要联网才能用'));};
+    document.head.appendChild(s);
+  });
+  return PST.ocr;
+}
+async function pasteOcr(blob){
+  const T=await loadOcr();
+  const r=await T.recognize(blob,'eng',{logger:()=>{}});
+  return (r.data&&r.data.text)||'';
+}
+function pasteClose(){$('#pasteModal').classList.remove('open');}
+function pasteConfirm(list,src){
+  if(!list||!list.length)return;
+  PST.list=list;PST.pick=0;
+  $('#pasteInfo').textContent=(src==='img'?'截图':'剪贴板')+'里识别到 '+list.length+' 组坐标，选一组再确认';
+  $('#pasteCands').innerHTML=list.map((c,i)=>
+    '<button class="pcd'+(i===0?' on':'')+'" data-i="'+i+'" type="button">'+esc(c.raw)
+    +'<span>纬度 '+fmt(c.lat)+' · 经度 '+fmt(c.lng)+'</span></button>').join('');
+  $('#pasteModal').classList.add('open');
+}
+function pasteGo(){
+  const c=PST.list[PST.pick];if(!c)return;
+  pasteClose();
+  sFly(c.lat,c.lng,17);
+  if($('#addModal').classList.contains('open')){
+    $('#addLat').value=fmt(c.lat);$('#addLng').value=fmt(c.lng);
+    ADD.cands=[];ADD.picked=null;ADD.revKey='';ADD.autoName='';
+    addResolve();                        /* 复用坐标分支：反查地址 + 名称 + 状态 */
+  }else{
+    setStatus('已跳转到 '+fmt(c.lat)+', '+fmt(c.lng),'ok');
+  }
+}
+function bindPasteCoord(){
+  const on=(id,fn)=>{const el=$(id);if(el)el.onclick=fn;};
+  on('#pasteClose',pasteClose);on('#pasteCancel',pasteClose);on('#pasteGo',pasteGo);
+  const box=$('#pasteCands');
+  if(box)box.onclick=e=>{
+    const b=e.target.closest('.pcd');if(!b)return;
+    PST.pick=+b.dataset.i||0;
+    box.querySelectorAll('.pcd').forEach((x,i)=>x.classList.toggle('on',i===PST.pick));
+  };
+  document.addEventListener('paste',e=>{
+    const t=e.target;
+    /* 正常粘贴场景不插手：Key、搜索框、多行导入框、可编辑区域 */
+    if(t&&t.closest&&t.closest('#txKeyIn,#q,textarea,[contenteditable="true"]'))return;
+    const cd=e.clipboardData;if(!cd)return;
+    let img=null;
+    for(const it of (cd.items||[])){if(it.type&&it.type.indexOf('image/')===0){img=it.getAsFile();break;}}
+    if(img){
+      e.preventDefault();
+      setStatus('正在识别截图里的坐标…');
+      pasteOcr(img).then(txt=>{
+        const list=pasteCoordExtract(txt);
+        if(list.length)pasteConfirm(list,'img');
+        else setStatus('截图里没认出经纬度，可以复制文字或直接输入','err');
+      }).catch(err=>setStatus(err.message||'截图识别失败','err'));
+      return;
+    }
+    const text=cd.getData('text/plain')||'';
+    if(!text)return;
+    const list=pasteCoordExtract(text);
+    if(!list.length)return;              /* 没坐标就放行，浏览器照常粘贴 */
+    e.preventDefault();
+    pasteConfirm(list,'txt');
+  });
+}
 function bindAdd(){
   const b=$('#btnAdd');if(b)b.onclick=openAdd;
   const on=(id,fn)=>{const el=$(id);if(el)el.onclick=fn;};
@@ -8712,6 +8837,7 @@ function bindUI(){
   bindImgDlg();
   bindMore();
   bindAdd();
+  bindPasteCoord();
   initTheme(); initFw(); bindSettings(); bindDetailChip(); initSide();
   SEARCH.init();
 }

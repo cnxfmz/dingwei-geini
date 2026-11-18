@@ -2,7 +2,7 @@
 name: dingwei-geini
 display_name: "定位给你"
 display_name_en: "定位给你 · PinDrop Map"
-version: "1.4.16"
+version: "1.4.17"
 description: "「定位给你」是一张空白起步的地点标注地图（单文件 HTML + 腾讯地图 GL）：点位由使用者自己搜索/新增/导入，可拖动校正、可导出 PNG/CSV/JSON，并可用加密链接或二维码分享给他人、把对方改动回传合并回来（零服务器）。用于清除本机个人数据与恢复默认设置、校验出厂状态、修改页面后做体检与验证、以及把技能重新打包发布。当用户提到 定位给你、空白地图、地点标注地图、清除个人数据、清个人数据、恢复默认设置、来一份干净的、分享地图、二维码分享、扫码分享、回传改动、合并改动、地图打包/发布技能 时使用。"
 description_zh: "空白起步的地点标注地图。搜地址或导入坐标即可加点位，拖动校正，一键导出 PNG / CSV / JSON；单文件 HTML，不预置任何点位，默认数据只存本机浏览器；分享时点位加密后随链接或二维码传递，不上传任何服务器。"
 description_en: "Drop pins on a clean, empty map. Search an address or import coordinates, drag a pin to correct it, then export the result as PNG, CSV or JSON. A single-file HTML page with nothing pre-loaded: pins stay in your browser by default, and sharing sends them encrypted inside the link itself (or a QR code when small), never to a server."
@@ -422,8 +422,13 @@ base64url，只能走 QR 的 byte 模式（8 bit/字符），白白丢掉了 alp
 - **经纬度顺序写反也能认**：1.4.16 起 `addResolve()` / `askNameForCoord()` 都先过 `coordPair()` ——
   先按原顺序试 `valid()`，不合法就交换再试（纬度 3~54、经度 73~136 两段不重叠，无歧义），
   识别为写反时按正确顺序回写两个输入框并提示一声。别把坐标判定改回裸 `valid()`：
-  中文习惯「经纬度」是先经后纬，用户照这个填进「纬度框在前」的表单就会 112/32 写反，
-  裸 `valid()` 判定失败后会掉进地址正查分支、地址栏空着就报「地址太短了」（1.4.16 修的就是这个）。
+  中文习惯「经纬度」是先经后纬，裸 `valid()` 判定失败后会掉进地址正查分支、地址栏空着就报「地址太短了」（1.4.16 修的就是这个）。
+  1.4.17 起表单改为「经度框在前、纬度框在后」贴合这个习惯，`coordPair()` 仍兜底写反的情况。
+- **剪贴板识别：文本离线、截图必须联网**：1.4.17 起任意位置 Ctrl+V 识别经纬度（Key 框 / 搜索框 / 导入框 / 可编辑区跳过），
+  先弹确认窗让人点「跳转」，不擅自移动地图；多条坐标列候选让用户选。文本走 `pasteCoordExtract()` 正则（JSON、
+  中英文标签、裸数字对、N/E 方位都认），零依赖、离线可用；截图走 `pasteOcr()`，**按需**从 jsdelivr 拉 tesseract.js +
+  eng 模型，必须联网，失败只提示、不影响其它功能。确认后若「新增地点」弹窗开着就回填经纬度并调 `addResolve()`
+  复用反查填表，没开就只 `sFly()` 定位。别把 OCR 做成随页面内联加载 —— 会拖慢打开并破坏离线文本识别。
 - **`file://` 打开也能清**：Chrome 下 file 协议的 localStorage 可用，`verify-reset.mjs` 默认就测这一路。
 - **`name` 必须是拉丁 kebab-case**：市场里的技能一律是 `name: dashboard` + `display_name: 看板工坊` 这种写法。
   命名校验会直接拒绝中文 name（报 `should be hyphen-case`）——本机能加载，不代表别人装了能用。
