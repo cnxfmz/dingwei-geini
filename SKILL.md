@@ -2,7 +2,7 @@
 name: dingwei-geini
 display_name: "定位给你"
 display_name_en: "定位给你 · PinDrop Map"
-version: "1.4.17"
+version: "1.4.18"
 description: "「定位给你」是一张空白起步的地点标注地图（单文件 HTML + 腾讯地图 GL）：点位由使用者自己搜索/新增/导入，可拖动校正、可导出 PNG/CSV/JSON，并可用加密链接或二维码分享给他人、把对方改动回传合并回来（零服务器）。用于清除本机个人数据与恢复默认设置、校验出厂状态、修改页面后做体检与验证、以及把技能重新打包发布。当用户提到 定位给你、空白地图、地点标注地图、清除个人数据、清个人数据、恢复默认设置、来一份干净的、分享地图、二维码分享、扫码分享、回传改动、合并改动、地图打包/发布技能 时使用。"
 description_zh: "空白起步的地点标注地图。搜地址或导入坐标即可加点位，拖动校正，一键导出 PNG / CSV / JSON；单文件 HTML，不预置任何点位，默认数据只存本机浏览器；分享时点位加密后随链接或二维码传递，不上传任何服务器。"
 description_en: "Drop pins on a clean, empty map. Search an address or import coordinates, drag a pin to correct it, then export the result as PNG, CSV or JSON. A single-file HTML page with nothing pre-loaded: pins stay in your browser by default, and sharing sends them encrypted inside the link itself (or a QR code when small), never to a server."
@@ -428,7 +428,10 @@ base64url，只能走 QR 的 byte 模式（8 bit/字符），白白丢掉了 alp
   先弹确认窗让人点「跳转」，不擅自移动地图；多条坐标列候选让用户选。文本走 `pasteCoordExtract()` 正则（JSON、
   中英文标签、裸数字对、N/E 方位都认），零依赖、离线可用；截图走 `pasteOcr()`，**按需**从 jsdelivr 拉 tesseract.js +
   eng 模型，必须联网，失败只提示、不影响其它功能。确认后若「新增地点」弹窗开着就回填经纬度并调 `addResolve()`
-  复用反查填表，没开就只 `sFly()` 定位。别把 OCR 做成随页面内联加载 —— 会拖慢打开并破坏离线文本识别。
+  复用反查填表。1.4.18 修了两处：① 确认后补齐 `sHitMark()` + `sFly(...,17)` + `sDetail()` 三件套（对齐搜索落点），
+  别只调 `sFly()` —— 它只移动地图、不打标记，静态底图模式下 `fbFocus()` 还只平移不缩放；
+  ② 图片检测改走 `pasteImageOf()`，覆盖标准 image item / files / 微信 QQ 的 text/html base64 `<img>`，
+  识别中和失败都占用确认窗给明确回话，别让「粘了图片完全没反应」。别把 OCR 做成随页面内联加载 —— 会拖慢打开并破坏离线文本识别。
 - **`file://` 打开也能清**：Chrome 下 file 协议的 localStorage 可用，`verify-reset.mjs` 默认就测这一路。
 - **`name` 必须是拉丁 kebab-case**：市场里的技能一律是 `name: dashboard` + `display_name: 看板工坊` 这种写法。
   命名校验会直接拒绝中文 name（报 `should be hyphen-case`）——本机能加载，不代表别人装了能用。

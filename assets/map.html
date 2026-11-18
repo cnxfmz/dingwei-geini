@@ -7226,7 +7226,7 @@ function sFly(lat,lng,zoom){
 function sDetail(it){
   const d=$('#sdetail');
   const weak=(it.level!=null&&it.level<=4);
-  const kind=it.src==='门牌解析'?'门牌解析':(weak?'仅到区级':'POI 定位');
+  const kind=it.src==='门牌解析'?'门牌解析':(it.src==='剪贴板定位'?'剪贴板定位':(weak?'仅到区级':'POI 定位'));
   d.innerHTML='<button class="x" id="sdx" aria-label="关闭">×</button>'
     +'<span class="skind'+(weak?' warn':'')+'">'+kind+'</span>'
     +'<h4>'+esc(it.title)+'</h4>'
@@ -8090,6 +8090,37 @@ function pasteCoordExtract(s){
   if(dir)push(dir[1],dir[2],dir[0]);
   return out.slice(0,8);
 }
+/* 剪贴板里的图片：标准 image item → files → text/html 里的 base64 <img>（微信/QQ/网页复制常见） */
+function pasteImageOf(cd){
+  for(const it of (cd.items||[])){
+    if(it.kind==='file'&&String(it.type).indexOf('image/')===0){const f=it.getAsFile();if(f)return f;}
+  }
+  for(const f of (cd.files||[])){if(String(f.type).indexOf('image/')===0)return f;}
+  const html=cd.getData('text/html')||'';
+  const m=html.match(/<img[^>]+src=["']?(data:image\/[a-zA-Z0-9.+-]+;base64,[^"'\s>]+)/i);
+  if(!m)return null;
+  try{
+    const [head,b64]=m[1].split(',');
+    const mime=(head.match(/data:([^;]+)/)||[])[1]||'image/png';
+    const bin=atob(b64.replace(/\s/g,'')),arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    return new File([arr],'paste.png',{type:mime});
+  }catch(e){return null;}
+}
+/* 识别中和失败都占用确认窗，别让「粘了图片完全没反应」再发生 */
+function pasteBusy(msg){
+  PST.list=[];PST.pick=0;
+  $('#pasteInfo').textContent=msg;
+  $('#pasteCands').innerHTML='';
+  const go=$('#pasteGo');if(go){go.disabled=true;go.textContent='识别中';}
+  $('#pasteModal').classList.add('open');
+}
+function pasteFail(msg){
+  $('#pasteInfo').textContent=msg;
+  $('#pasteCands').innerHTML='';
+  const go=$('#pasteGo');if(go){go.disabled=true;go.textContent='跳转到此坐标';}
+  $('#pasteModal').classList.add('open');
+}
 function loadOcr(){
   if(window.Tesseract)return Promise.resolve(window.Tesseract);
   if(PST.ocr)return PST.ocr;
@@ -8112,6 +8143,7 @@ function pasteConfirm(list,src){
   if(!list||!list.length)return;
   PST.list=list;PST.pick=0;
   $('#pasteInfo').textContent=(src==='img'?'截图':'剪贴板')+'里识别到 '+list.length+' 组坐标，选一组再确认';
+  const go=$('#pasteGo');if(go){go.disabled=false;go.textContent='跳转到此坐标';}
   $('#pasteCands').innerHTML=list.map((c,i)=>
     '<button class="pcd'+(i===0?' on':'')+'" data-i="'+i+'" type="button">'+esc(c.raw)
     +'<span>纬度 '+fmt(c.lat)+' · 经度 '+fmt(c.lng)+'</span></button>').join('');
@@ -8120,13 +8152,17 @@ function pasteConfirm(list,src){
 function pasteGo(){
   const c=PST.list[PST.pick];if(!c)return;
   pasteClose();
-  sFly(c.lat,c.lng,17);
+  /* 对齐搜索落点的三件套：大头针 + 飞行放大 + 详情卡（可一键加入清单）。
+     不写搜索框、不进搜索历史，免得污染另一套状态 */
+  const it={lat:c.lat,lng:c.lng,title:'剪贴板坐标',address:'经纬度来自剪贴板识别',src:'剪贴板定位'};
+  sHitMark(it.lat,it.lng);
+  sFly(it.lat,it.lng,17);
+  sDetail(it);
+  setStatus('已定位到 '+fmt(c.lat)+', '+fmt(c.lng)+(FB.on?' · 静态底图细节有限':''),'ok');
   if($('#addModal').classList.contains('open')){
     $('#addLat').value=fmt(c.lat);$('#addLng').value=fmt(c.lng);
     ADD.cands=[];ADD.picked=null;ADD.revKey='';ADD.autoName='';
     addResolve();                        /* 复用坐标分支：反查地址 + 名称 + 状态 */
-  }else{
-    setStatus('已跳转到 '+fmt(c.lat)+', '+fmt(c.lng),'ok');
   }
 }
 function bindPasteCoord(){
@@ -8143,19 +8179,24 @@ function bindPasteCoord(){
     /* 正常粘贴场景不插手：Key、搜索框、多行导入框、可编辑区域 */
     if(t&&t.closest&&t.closest('#txKeyIn,#q,textarea,[contenteditable="true"]'))return;
     const cd=e.clipboardData;if(!cd)return;
-    let img=null;
-    for(const it of (cd.items||[])){if(it.type&&it.type.indexOf('image/')===0){img=it.getAsFile();break;}}
+    const img=pasteImageOf(cd);
     if(img){
       e.preventDefault();
-      setStatus('正在识别截图里的坐标…');
+      pasteBusy('正在识别截图里的坐标…首次要下载识别引擎，约 20–30 秒，别关页面');
       pasteOcr(img).then(txt=>{
         const list=pasteCoordExtract(txt);
         if(list.length)pasteConfirm(list,'img');
-        else setStatus('截图里没认出经纬度，可以复制文字或直接输入','err');
-      }).catch(err=>setStatus(err.message||'截图识别失败','err'));
+        else pasteFail('截图里没认出经纬度。可用系统「提取文字」转成文本再粘贴，或直接输入坐标');
+      }).catch(err=>pasteFail(err.message||'截图识别失败，请确认联网后重试'));
       return;
     }
     const text=cd.getData('text/plain')||'';
+    /* 纯图片但格式读不到（如 text/html 里指向 file:// 或外链）：也给明确回话，不能静默 */
+    if(!text&&/<img[\s>]/i.test(cd.getData('text/html')||'')){
+      e.preventDefault();
+      pasteFail('这张图片网页读不到。请用系统「提取文字」把坐标转成文本再粘贴');
+      return;
+    }
     if(!text)return;
     const list=pasteCoordExtract(text);
     if(!list.length)return;              /* 没坐标就放行，浏览器照常粘贴 */
