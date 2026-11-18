@@ -7239,6 +7239,16 @@ function sDetail(it){
     +'<button class="btn" data-sa="add">加入清单</button></div>'
     +'<div class="stip">'+(FB.on?'当前为静态底图，最高约 1:1.7，楼栋细节有限。':'标记已放大到楼栋级；可拖动地图微调，点「加入清单」进入右侧清单。')+'</div>';
   d.style.display='block';
+  /* 浮岛模式：详情卡默认 top:12px 会被横跨全屏的顶栏（z2200）和状态条（z1500）压住上半截。
+     手机端顶卡高度随换行变、状态条 top 由 JS 动态写入，所以按实测底边算，不写死数值。 */
+  if(document.documentElement.getAttribute('data-fw')==='island'){
+    const hd=document.querySelector('header'),sb=document.querySelector('.statusbar');
+    let bot=0;
+    if(hd)bot=Math.max(bot,hd.getBoundingClientRect().bottom);
+    if(sb)bot=Math.max(bot,sb.getBoundingClientRect().bottom);
+    const wrap=d.offsetParent,wt=wrap?wrap.getBoundingClientRect().top:0;
+    d.style.top=Math.round(bot-wt+12)+'px';
+  }else{d.style.top='';}
   hideDetail();
   $('#sdx').onclick=()=>{d.style.display='none';};
   d.querySelector('[data-sa="copy"]').onclick=()=>{
@@ -8063,7 +8073,37 @@ function delPoint(id){
 }
 /* ---------- 剪贴板坐标识别：文本走正则（离线可用），截图走按需 OCR（必须联网） ---------- */
 const PST={list:[],pick:0,ocr:null};
-function pasteCoordExtract(s){
+/* OCR 把小数点吞掉时（112.15785462718667 → 11215785462718667），按数值特征把点插回去。
+   只在 OCR 通道、常规三通道零结果时兜底；长度门槛挡掉门牌号/电量/电话这类短整数噪点。 */
+function ocrRestoreCoord(text){
+  const T=String(text||'').replace(/[\r\n]+/g,'#');
+  const toks=[...T.matchAll(/-?\d+(?:\.\d+)?/g)].map(m=>m[0]);
+  const nums=[];
+  for(const t of toks){
+    if(t.indexOf('.')>=0){                       /* 小数点还在的原值，最可信 */
+      const v=+t;
+      if(v>3&&v<54)nums.push({v:v,kind:'lat',score:3});
+      else if(v>73&&v<136)nums.push({v:v,kind:'lng',score:3});
+    }else if(t.length>=7){                        /* 被吞点的长整数才尝试还原 */
+      const s=t.replace(/^\-/,'');
+      const h2=+s.slice(0,2),h3=+s.slice(0,3);
+      /* 经度吞点后约 16-17 位，要求 ≥12，挡掉电量 1056793；纬度吞点后 8-9 位。
+         h2>29 挡掉经度 112...→11.2 的伪纬度（纬度区间 3-54 太宽，收紧上半段） */
+      if(h3>=73&&h3<136&&s.length>=12)nums.push({v:+(s.slice(0,3)+'.'+s.slice(3)),kind:'lng',score:2});
+      if(h2>29&&h2<54&&s.length>=8)nums.push({v:+(s.slice(0,2)+'.'+s.slice(2)),kind:'lat',score:2});
+    }
+  }
+  const lats=nums.filter(n=>n.kind==='lat'),lngs=nums.filter(n=>n.kind==='lng');
+  const out=[];
+  for(const a of lats)for(const b of lngs){
+    if(valid({lat:a.v,lng:b.v}))out.push({lat:a.v,lng:b.v,score:a.score+b.score,raw:'ocr 还原'});
+  }
+  out.sort((x,y)=>y.score-x.score);
+  const seen={},uniq=[];
+  for(const c of out){const k=c.lat.toFixed(5)+','+c.lng.toFixed(5);if(!seen[k]){seen[k]=1;uniq.push(c);}}
+  return uniq.slice(0,8);
+}
+function pasteCoordExtract(s,ocr){
   if(!s)return [];
   /* 换行换成阻断符，避免相邻两行的坐标被跨行错配成一组 */
   const T=String(s).replace(/[，；]/g,',').replace(/[ \t]+/g,' ').replace(/[\r\n]+/g,'#');
@@ -8090,6 +8130,7 @@ function pasteCoordExtract(s){
   /* ③ 方位写法：N32.03 E112.15 */
   const dir=T.match(/[NnSs]\s*(\d+(?:\.\d+)?)\D{1,4}[EeWw]\s*(\d+(?:\.\d+)?)/);
   if(dir)push(dir[1],dir[2],dir[0]);
+  if(!out.length&&ocr)return ocrRestoreCoord(s);   /* OCR 吞点兜底：常规认不出才启用 */
   return out.slice(0,8);
 }
 /* 剪贴板里的图片：标准 image item → files → text/html 里的 base64 <img>（微信/QQ/网页复制常见） */
@@ -8186,7 +8227,7 @@ function bindPasteCoord(){
       e.preventDefault();
       pasteBusy('正在识别截图里的坐标…首次要下载识别引擎，约 20–30 秒，别关页面');
       pasteOcr(img).then(txt=>{
-        const list=pasteCoordExtract(txt);
+        const list=pasteCoordExtract(txt,true);
         if(list.length)pasteConfirm(list,'img');
         else pasteFail('截图里没认出经纬度。可用系统「提取文字」转成文本再粘贴，或直接输入坐标');
       }).catch(err=>pasteFail(err.message||'截图识别失败，请确认联网后重试'));
