@@ -10,8 +10,8 @@
 <meta property="og:title" content="定位给你">
 <meta property="og:description" content="搜地址就能标点，可拖动校正、语音输入、导出图片；数据只存在本机。">
 <meta property="og:image" content="https://xiangyang-9points.app.workbuddy.host/share-thumb.jpg?sharecode=NNNTEDLJEX">
-<meta property="og:image:height" content="827">
 <meta property="og:image:width" content="827">
+<meta property="og:image:height" content="827">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='3'%20y1='1'%20x2='29'%20y2='31'%20gradientUnits='userSpaceOnUse'%3E%3Cstop%20offset='0'%20stop-color='%239ae6ff'/%3E%3Cstop%20offset='.46'%20stop-color='%2322d3ee'/%3E%3Cstop%20offset='1'%20stop-color='%237c8cf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='32'%20height='32'%20rx='9.5'%20fill='url(%23g)'/%3E%3Cpath%20fill='%2305141f'%20fill-rule='evenodd'%20d='M16%205.75c-3.7%200-6.7%202.93-6.7%206.55%200%204.9%205.32%2010.55%206.32%2011.6.25.28.51.28.76%200%201-1.05%206.32-6.7%206.32-11.6%200-3.62-3-6.55-6.7-6.55Zm-2.4%206.6a2.4%202.4%200%201%200%204.8%200%202.4%202.4%200%201%200-4.8%200Z'/%3E%3C/svg%3E">
 <style>
@@ -6858,6 +6858,12 @@ async function txReverse(lat,lng){
   const r=d.result||{},fa=r.formatted_addresses||{};
   return cleanPlaceName(fa.recommend||fa.rough||r.address||'');
 }
+/* 按坐标取结构化地址（区域/街道/门牌/建筑名）。单独一条通道，
+   不改上面的 txReverse（它服务 revPlaceName/askNameForCoord/addSave 兜底，get_poi:0 不能动） */
+async function txReverseDetail(lat,lng){
+  const d=await txCall('geocoder/v1/',{location:(+lat).toFixed(6)+','+(+lng).toFixed(6),get_poi:1},9000);
+  return d.result||null;
+}
 /* 统一检索：SDK 通道优先（内置预览可用），失败或没结果再走自带 Key */
 async function poiAsk(kw,limit){
   limit=limit||10;
@@ -7654,7 +7660,7 @@ function bindMore(){
 /* nameTouched：用户是否手填过名称（手填后解析不再覆盖）
    autoName：名称框里那个值是系统自动填的（换坐标时允许覆盖）
    revKey/revName：按坐标反查到的「该位置地点名」及其坐标指纹，避免重复请求 */
-const ADD={cands:[],picked:null,busy:false,nameTouched:false,revKey:'',revName:'',autoName:''};
+const ADD={cands:[],picked:null,busy:false,nameTouched:false,revKey:'',revName:'',autoName:'',revSeq:0};
 function addStat(t,cls){const e=$('#addStat');if(!e)return;e.textContent=t;e.className='mstat'+(cls?' '+cls:'');}
 /* 地点名清洗：剥掉「湖北省襄阳市樊城区」这类行政区前缀（只认完整串，不误伤「襄阳古城」），
    过长截断。取不到有效名字时原样返回，宁可长一点也不给空名。 */
@@ -7686,6 +7692,52 @@ async function revPlaceName(lat,lng){
   }
   return '';
 }
+/* 把两种逆地理通道的结果归一成同一结构：区域/街道/门牌/建筑名 */
+function normRev(r){
+  r=r||{};
+  const c=r.address_component||{},a=r.ad_info||{},fa=r.formatted_addresses||{};
+  const s=v=>String(v==null?'':v).replace(/\s+/g,' ').trim();
+  const pois=r.pois;
+  const poi=Array.isArray(pois)&&pois.length?s(pois[0].title||pois[0].name||''):'';
+  return {city:s(c.city||a.city),district:s(c.district||a.district),
+    street:s(c.street),streetNumber:s(c.street_number),poi:poi,
+    recommend:s(fa.recommend||fa.rough),address:s(r.address)};
+}
+/* 按坐标取结构化地址：SDK 代理通道优先，失败再走自带 Key；两通道都拿不到返回 null */
+async function revGeoDetail(lat,lng){
+  if(!valid({lat:lat,lng:lng}))return null;
+  if(geocoder&&hasProxy()){
+    let r=null;
+    /* SDK 的 getAddress 不一定透传 get_poi：带参失败就原样重试一次，保证至少拿到标准地址 */
+    try{r=await withTimeout(geocoder.getAddress({location:new TMap.LatLng(lat,lng),get_poi:1}),7000);}catch(e){}
+    if(!(r&&r.status===0&&r.result)){
+      try{r=await withTimeout(geocoder.getAddress({location:new TMap.LatLng(lat,lng)}),7000);}catch(e){}
+    }
+    if(r&&r.status===0&&r.result)return normRev(r.result);
+  }
+  if(TXKEY){
+    try{const d=await txReverseDetail(lat,lng);if(d)return normRev(d);}catch(e){S.err=e;}
+  }
+  return null;
+}
+/* 结构化结果拼成一行地址，例：樊城区 建设路 28 号 · 建筑名。
+   省市默认不拼（除非城市不在本地），门牌补齐「号」，建筑名去重后追加 */
+function revAddressLine(d){
+  if(!d)return '';
+  const seg=[],put=x=>{x=String(x||'').replace(/\s+/g,' ').trim();if(x&&seg.indexOf(x)<0)seg.push(x);};
+  if(d.city&&!/襄阳/.test(d.city))put(d.city);
+  let district=d.district||'',street=String(d.street||'').replace(/\s+/g,' ').trim();
+  if(district&&street.indexOf(district)===0)street=street.slice(district.length).replace(/^[\s·、,，/-]+/,'');
+  put(district);put(street);
+  if(d.streetNumber){
+    const n=String(d.streetNumber).trim();
+    put(/(号|弄|栋|幢|单元|室|楼)$/.test(n)?n:n+'号');
+  }
+  if(d.poi&&seg.join(' ').indexOf(d.poi)<0)put('· '+d.poi);
+  let line=seg.join(' ').replace(/\s+/g,' ').trim();
+  if(!line)line=cleanPlaceName(d.recommend||d.address||'');
+  return line;
+}
 /* 手填经纬度后先自动取一次名称，用户能提前看见并改；点「添加」时还有一层兜底 */
 async function askNameForCoord(){
   const latEl=$('#addLat'),lngEl=$('#addLng'),nm=$('#addName'),nn=$('#addNameNote');
@@ -7699,9 +7751,10 @@ async function askNameForCoord(){
   if(ADD.revKey===k)return;
   if(cur)nm.value='';                             /* 坐标变了，旧自动名作废 */
   ADD.autoName='';ADD.revKey=k;ADD.revName='';
+  const seq=++ADD.revSeq;
   if(nn)nn.textContent='正在取该位置的名称…';
   const t=await revPlaceName(la,ln);
-  if(ADD.revKey!==k)return;
+  if(ADD.revKey!==k||ADD.revSeq!==seq)return;      /* 坐标已变或解析分支接管，丢弃过期结果 */
   ADD.revName=t;
   if(t&&!nm.value.trim()&&!ADD.nameTouched){
     nm.value=t;ADD.autoName=t;
@@ -7790,6 +7843,32 @@ function roadOf(q){
 }
 async function addResolve(){
   const q=($('#addAddr').value||$('#addName').value||'').trim();
+  /* 经纬度优先：两框都合法就按坐标反查地址、名称并让地图飞过去，不再走地址正查 */
+  const lat=parseFloat($('#addLat').value),lng=parseFloat($('#addLng').value);
+  if(valid({lat:lat,lng:lng})){
+    if(ADD.busy)return;
+    const go=$('#addResolve');
+    ADD.busy=true;if(go){go.disabled=true;go.textContent='解析中';}
+    const k=lat.toFixed(5)+','+lng.toFixed(5),seq=++ADD.revSeq;
+    ADD.revKey=k;
+    ADD.cands=[];ADD.picked=null;                  /* 作废上一次地址正查的候选，避免旧按钮把坐标改回去 */
+    const cd=$('#addCands');if(cd){cd.className='mcands';cd.innerHTML='';}
+    sFly(lat,lng,17);                              /* 先飞，反查慢也不卡响应；静态底图走 fbFocus */
+    addStat('正在按坐标取地址…');
+    let d=null;
+    try{d=await revGeoDetail(lat,lng);}
+    finally{ADD.busy=false;if(go){go.disabled=false;go.textContent='解析';}}
+    if(ADD.revSeq!==seq)return;                    /* 期间改了坐标或有新请求，丢弃旧结果 */
+    const line=d&&revAddressLine(d);
+    if(!line){addStat('这个坐标没取到地名，可直接添加或填一把地址服务 Key','err');return;}
+    $('#addAddr').value=line;                      /* 区域/街道/门牌/建筑名写进地址栏 */
+    const nm=$('#addName');
+    if(nm&&!ADD.nameTouched&&nm.value.trim()===ADD.autoName)nm.value='';
+    addApplyCand({lat:lat,lng:lng,title:(d.poi||line),address:line,src:'坐标反查'});
+    const nn=$('#addNameNote');if(nn&&!ADD.nameTouched)nn.textContent='已按坐标取名 · 可改';
+    addStat('已定位到 '+line,'ok');
+    return;
+  }
   if(q.length<2){addStat('地址太短了，至少写 2 个字','err');$('#addAddr').focus();return;}
   if(ADD.busy)return;
   const go=$('#addResolve');

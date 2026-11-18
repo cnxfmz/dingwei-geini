@@ -2,7 +2,7 @@
 name: dingwei-geini
 display_name: "定位给你"
 display_name_en: "定位给你 · PinDrop Map"
-version: "1.4.14"
+version: "1.4.15"
 description: "「定位给你」是一张空白起步的地点标注地图（单文件 HTML + 腾讯地图 GL）：点位由使用者自己搜索/新增/导入，可拖动校正、可导出 PNG/CSV/JSON，并可用加密链接或二维码分享给他人、把对方改动回传合并回来（零服务器）。用于清除本机个人数据与恢复默认设置、校验出厂状态、修改页面后做体检与验证、以及把技能重新打包发布。当用户提到 定位给你、空白地图、地点标注地图、清除个人数据、清个人数据、恢复默认设置、来一份干净的、分享地图、二维码分享、扫码分享、回传改动、合并改动、地图打包/发布技能 时使用。"
 description_zh: "空白起步的地点标注地图。搜地址或导入坐标即可加点位，拖动校正，一键导出 PNG / CSV / JSON；单文件 HTML，不预置任何点位，默认数据只存本机浏览器；分享时点位加密后随链接或二维码传递，不上传任何服务器。"
 description_en: "Drop pins on a clean, empty map. Search an address or import coordinates, drag a pin to correct it, then export the result as PNG, CSV or JSON. A single-file HTML page with nothing pre-loaded: pins stay in your browser by default, and sharing sends them encrypted inside the link itself (or a QR code when small), never to a server."
@@ -415,6 +415,10 @@ base64url，只能走 QR 的 byte 模式（8 bit/字符），白白丢掉了 alp
 - **两条地址通道都要留着**：WorkBuddy 预览环境有代理，走 SDK 的 Suggestion/Geocoder；公网那串代理地址是
   占位符，走自带 Key 的 JSONP。`hasProxy()` 判断走哪条，删掉任何一条都会有一端不可用。
   两种环境都会看到 `XMLHttpRequest: Invalid URL` 的控制台噪音，属已知现象，不影响 Key 通道搜索。
+- **坐标反查建筑名走独立通道**：1.4.15 起「解析」在经纬度合法时反查地址，建筑名取 `pois[0].title`。
+  这条走新增的 `txReverseDetail()`（`get_poi:1`），**原 `txReverse()` 仍是 `get_poi:0` 不能动** ——
+  它服务 `revPlaceName()` / 手填坐标取名 / 提交兜底三处，改了会连带改掉这些地方的名字。
+  SDK 的 `getAddress` 不一定透传 `get_poi`，所以带参失败会无参重试一次兜底；两通道仍必须都留。
 - **`file://` 打开也能清**：Chrome 下 file 协议的 localStorage 可用，`verify-reset.mjs` 默认就测这一路。
 - **`name` 必须是拉丁 kebab-case**：市场里的技能一律是 `name: dashboard` + `display_name: 看板工坊` 这种写法。
   命名校验会直接拒绝中文 name（报 `should be hyphen-case`）——本机能加载，不代表别人装了能用。
