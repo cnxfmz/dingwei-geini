@@ -1842,6 +1842,19 @@
   </div>
 </div>
 
+<div class="modal" id="mapPickModal" role="dialog" aria-modal="true" aria-labelledby="mapPickTitle">
+  <div class="mbox">
+    <div class="mhd"><b id="mapPickTitle">标记这个位置？</b><button class="x" id="mapPickClose" type="button" aria-label="关闭">×</button></div>
+    <div class="pmdesc" id="mapPickInfo">已读取你点的位置，确认后会在地图上打标记并查出这条道路的信息。</div>
+    <div class="pcd on" id="mapPickCoord" style="cursor:default"></div>
+    <div class="pmdesc" id="mapPickAddr" style="margin:9px 0 0;min-height:16px;color:var(--dim)">正在查这个位置的地名…</div>
+    <div class="mfoot">
+      <button class="mini" id="mapPickCancel" type="button">取消</button>
+      <button class="mini primary" id="mapPickGo" type="button">标记此位置</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal" id="setModal" role="dialog" aria-modal="true" aria-labelledby="setTitle">
   <div class="mbox">
     <div class="mhd"><b id="setTitle">设置</b><button class="x" id="setClose" type="button" aria-label="关闭">×</button></div>
@@ -5620,15 +5633,17 @@ function fbBind(){
       else focusPoint(p.id);
       return;
     }
-    if(!d.moved&&pickId){
-      const r=$('#fb').getBoundingClientRect();
-      const q=fbLatLng((e.clientX-r.left-FB.tx)/FB.s,(e.clientY-r.top-FB.ty)/FB.s);
+    if(d.moved)return;                   /* 拖过背景就不当点选 */
+    const r=$('#fb').getBoundingClientRect();
+    const q=fbLatLng((e.clientX-r.left-FB.tx)/FB.s,(e.clientY-r.top-FB.ty)/FB.s);
+    if(!valid(q))return;
+    if(pickId){
       const id=pickId;pickId=null;
-      if(valid(q)){
-        setPosition(id,q.lat,q.lng);renderList();
-        $('#tipbar').style.display='none';
-        setStatus('第 '+points.find(x=>x.id===id).no+' 点已按点击位置更新','ok');
-      }
+      setPosition(id,q.lat,q.lng);renderList();
+      $('#tipbar').style.display='none';
+      setStatus('第 '+points.find(x=>x.id===id).no+' 点已按点击位置更新','ok');
+    }else{
+      mapPickAsk(q.lat,q.lng);           /* 1.4.20：静态底图空白处单击询问 */
     }
   });
 }
@@ -6717,15 +6732,18 @@ function setupGLMap(){
   });
   map.on('touchend',endDrag);
 
-  /* 点选落点 */
+  /* 地图单击：点选落点优先；否则空白处单击 → 询问是否标记这个位置 */
   map.on('click',e=>{
-    if(!pickId)return;
     const c=latlngOf(e.latLng); if(!valid(c))return;
-    const id=pickId;pickId=null;
-    setPosition(id,c.lat,c.lng);
-    $('#tipbar').className='overlay tipbar';
-    $('#tipbar').style.display='none';
-    setStatus('第 '+points.find(x=>x.id===id).no+' 点已按点击位置更新','ok');
+    if(pickId){
+      const id=pickId;pickId=null;
+      setPosition(id,c.lat,c.lng);
+      $('#tipbar').className='overlay tipbar';
+      $('#tipbar').style.display='none';
+      setStatus('第 '+points.find(x=>x.id===id).no+' 点已按点击位置更新','ok');
+      return;
+    }
+    mapPickAsk(c.lat,c.lng);           /* 1.4.20：单击空白地图询问是否定位标记 */
   });
 
   return true;
@@ -7226,7 +7244,7 @@ function sFly(lat,lng,zoom){
 function sDetail(it){
   const d=$('#sdetail');
   const weak=(it.level!=null&&it.level<=4);
-  const kind=it.src==='门牌解析'?'门牌解析':(it.src==='剪贴板定位'?'剪贴板定位':(weak?'仅到区级':'POI 定位'));
+  const kind=it.src==='门牌解析'?'门牌解析':(it.src==='剪贴板定位'?'剪贴板定位':(it.src==='地图点选'?'地图点选':(weak?'仅到区级':'POI 定位')));
   d.innerHTML='<button class="x" id="sdx" aria-label="关闭">×</button>'
     +'<span class="skind'+(weak?' warn':'')+'">'+kind+'</span>'
     +'<h4>'+esc(it.title)+'</h4>'
@@ -8245,6 +8263,53 @@ function bindPasteCoord(){
     pasteConfirm(list,'txt');
   });
 }
+
+/* ===== 1.4.20 单击地图标记位置：询问 → 反查道路 → 三件套定位 → 详情卡一键加入 =====
+   与粘贴定位同范式，不写搜索框、不进搜索历史；GL 走 map.click，静态底图走 FB.pointerup，两路都调 mapPickAsk。 */
+const MAP_PICK={lat:0,lng:0,seq:0};
+function mapPickAsk(lat,lng){
+  if(!valid({lat:lat,lng:lng}))return;
+  if($('#addModal').classList.contains('open'))return;   /* 填表时不打断 */
+  MAP_PICK.lat=lat;MAP_PICK.lng=lng;
+  const seq=++MAP_PICK.seq;
+  $('#mapPickCoord').textContent='坐标 · GCJ-02   '+fmt(lat)+', '+fmt(lng)+(FB.on?'（静态底图精度有限）':'');
+  $('#mapPickAddr').textContent='正在查这个位置的地名…';
+  $('#mapPickGo').disabled=false;$('#mapPickGo').textContent='标记此位置';
+  $('#mapPickModal').classList.add('open');
+  /* 异步取地名填进确认窗，让用户先看清楚再决定；过期请求（连点换位置）丢弃 */
+  if(typeof revGeoDetail==='function'){
+    revGeoDetail(lat,lng).then(d=>{
+      if(seq!==MAP_PICK.seq)return;
+      const line=revAddressLine(d);
+      $('#mapPickAddr').textContent=line?'查到：'+line:'没查到地名，仍可按坐标标记';
+    }).catch(()=>{if(seq===MAP_PICK.seq)$('#mapPickAddr').textContent='没查到地名，仍可按坐标标记';});
+  }else{
+    $('#mapPickAddr').textContent='可按坐标标记';
+  }
+}
+function mapPickClose(){$('#mapPickModal').classList.remove('open');++MAP_PICK.seq;}
+async function mapPickGo(){
+  const lat=MAP_PICK.lat,lng=MAP_PICK.lng;
+  if(!valid({lat:lat,lng:lng}))return;
+  mapPickClose();
+  /* 走路信息：确认时再取一次（弹窗里那次只是预览），取不到就用坐标兜底，不卡主流程 */
+  let addr='';
+  try{const d=await revGeoDetail(lat,lng);addr=revAddressLine(d);}catch(e){}
+  const it={lat:lat,lng:lng,
+    title:addr?cleanPlaceName(addr):'地图标记点',
+    address:addr||'经纬度来自地图点选',
+    src:'地图点选'};
+  sHitMark(it.lat,it.lng);
+  sFly(it.lat,it.lng,17);
+  sDetail(it);
+  setStatus('已标记 '+fmt(lat)+', '+fmt(lng)+(addr?' · '+addr:'')+(FB.on?' · 静态底图细节有限':''),'ok');
+}
+function bindMapPick(){
+  const on=(id,fn)=>{const el=$(id);if(el)el.onclick=fn;};
+  on('#mapPickClose',mapPickClose);on('#mapPickCancel',mapPickClose);on('#mapPickGo',mapPickGo);
+  const box=$('#mapPickModal');
+  if(box)box.addEventListener('click',e=>{if(e.target===box)mapPickClose();});   /* 点遮罩关闭 */
+}
 function bindAdd(){
   const b=$('#btnAdd');if(b)b.onclick=openAdd;
   const on=(id,fn)=>{const el=$(id);if(el)el.onclick=fn;};
@@ -8920,6 +8985,7 @@ function bindUI(){
   bindMore();
   bindAdd();
   bindPasteCoord();
+  bindMapPick();
   initTheme(); initFw(); bindSettings(); bindDetailChip(); initSide();
   SEARCH.init();
 }
