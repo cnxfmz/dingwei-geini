@@ -1809,10 +1809,10 @@
 
     <div class="block opt">
       <div class="fline"><label for="addLat">经纬度</label><span class="tag opt">选填</span>
-        <span class="fnote">解析成功会自动填</span></div>
+        <span class="fnote">顺序写反也认，解析成功自动填</span></div>
       <div class="m2">
-        <input id="addLat" type="text" placeholder="lat 自动" inputmode="decimal">
-        <input id="addLng" type="text" placeholder="lng 自动" inputmode="decimal">
+        <input id="addLat" type="text" placeholder="纬度 自动" inputmode="decimal">
+        <input id="addLng" type="text" placeholder="经度 自动" inputmode="decimal">
       </div>
     </div>
 
@@ -4621,6 +4621,15 @@ function latlngOf(loc){
   return {lat,lng};
 }
 function valid(c){return isFinite(c.lat)&&isFinite(c.lng)&&c.lat>3&&c.lat<54&&c.lng>73&&c.lng<136;}
+/* 从两个输入框识别经纬度：先按原顺序，不合法就交换再试。
+   纬度(3~54)与经度(73~136)范围不重叠，不会有歧义；写 112/32 或 32/112 都能认出来。 */
+function coordPair(a,b){
+  a=parseFloat(a);b=parseFloat(b);
+  if(!isFinite(a)||!isFinite(b))return null;
+  if(valid({lat:a,lng:b}))return {lat:a,lng:b,swapped:false};
+  if(valid({lat:b,lng:a}))return {lat:b,lng:a,swapped:true};
+  return null;
+}
 function today(){const d=new Date();return d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');}
 function download(name, content, type){
   const blob=new Blob([content],{type:type||'text/plain;charset=utf-8'});
@@ -7745,8 +7754,10 @@ async function askNameForCoord(){
   if(ADD.nameTouched)return;
   const cur=nm.value.trim();
   if(cur&&cur!==ADD.autoName)return;              /* 有非自动内容，不动 */
-  const la=parseFloat(latEl.value),ln=parseFloat(lngEl.value);
-  if(!valid({lat:la,lng:ln}))return;
+  const cp=coordPair(latEl.value,lngEl.value);
+  if(!cp)return;
+  const la=cp.lat,ln=cp.lng;
+  if(cp.swapped){latEl.value=fmt(la);lngEl.value=fmt(ln);}  /* 顺序写反，回写纠正后的值 */
   const k=la.toFixed(5)+','+ln.toFixed(5);
   if(ADD.revKey===k)return;
   if(cur)nm.value='';                             /* 坐标变了，旧自动名作废 */
@@ -7843,10 +7854,16 @@ function roadOf(q){
 }
 async function addResolve(){
   const q=($('#addAddr').value||$('#addName').value||'').trim();
-  /* 经纬度优先：两框都合法就按坐标反查地址、名称并让地图飞过去，不再走地址正查 */
-  const lat=parseFloat($('#addLat').value),lng=parseFloat($('#addLng').value);
-  if(valid({lat:lat,lng:lng})){
+  /* 经纬度优先：两框有合法坐标就按坐标反查地址、名称并让地图飞过去，不再走地址正查。
+     经纬度写反顺序也能认（coordPair 自动交换），纠正后写回输入框 */
+  const cp=coordPair($('#addLat').value,$('#addLng').value);
+  if(cp){
     if(ADD.busy)return;
+    const lat=cp.lat,lng=cp.lng;
+    if(cp.swapped){                                /* 顺序写反了：按正确顺序回写，状态栏说明一声 */
+      $('#addLat').value=fmt(lat);$('#addLng').value=fmt(lng);
+      addStat('经纬度写反了，已自动按「纬度 / 经度」认');
+    }
     const go=$('#addResolve');
     ADD.busy=true;if(go){go.disabled=true;go.textContent='解析中';}
     const k=lat.toFixed(5)+','+lng.toFixed(5),seq=++ADD.revSeq;
@@ -7854,7 +7871,7 @@ async function addResolve(){
     ADD.cands=[];ADD.picked=null;                  /* 作废上一次地址正查的候选，避免旧按钮把坐标改回去 */
     const cd=$('#addCands');if(cd){cd.className='mcands';cd.innerHTML='';}
     sFly(lat,lng,17);                              /* 先飞，反查慢也不卡响应；静态底图走 fbFocus */
-    addStat('正在按坐标取地址…');
+    if(!cp.swapped)addStat('正在按坐标取地址…');
     let d=null;
     try{d=await revGeoDetail(lat,lng);}
     finally{ADD.busy=false;if(go){go.disabled=false;go.textContent='解析';}}
